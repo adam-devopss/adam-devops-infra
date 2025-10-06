@@ -1,7 +1,7 @@
 name: OIDC Check
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch:
 
 permissions:
   id-token: write
@@ -10,6 +10,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout (optional)
         uses: actions/checkout@v4
@@ -17,28 +18,21 @@ jobs:
       - name: Install Yandex Cloud CLI
         run: |
           curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
-          echo "${HOME}/yandex-cloud/bin" >> "$GITHUB_PATH"
+          echo "$HOME/yandex-cloud/bin" >> "$GITHUB_PATH"
+          yc --version
 
       - name: Get YC IAM token via GitHub OIDC
         run: |
-          yc --version
-          yc iam create-token --jwt-from-oidc > token.txt
-          echo "YC_IAM_TOKEN=$(cat token.txt)" >> "$GITHUB_ENV"
+          yc config profile create github-oidc
+          yc config set cloud-id "${{ secrets.YC_CLOUD_ID }}"
+          yc config set folder-id "${{ secrets.YC_FOLDER_ID }}"
+          # Обмен GitHub OIDC → YC IAM
+          yc config set token "$(yc iam create-token)"
 
       - name: Who am I in Yandex Cloud
-        run: |
-          yc iam whoami --format json --token "${{ env.YC_IAM_TOKEN }}" | tee whoami.json
-          echo "Parsed service_account_id:"
-          cat whoami.json | jq -r '.service_account_id // .user_account.id // "unknown"'
+        run: yc iam whoami
 
       - name: Assert SA is ci-oidc-sa
-        env:
-          EXPECTED_SA_ID: "aje94h2634726c8ivghr"   # <-- твой ci-oidc-sa
         run: |
-          SA_ID=$(jq -r '.service_account_id // empty' whoami.json)
-          if [ -z "$SA_ID" ]; then
-            echo "Not a service account token (maybe user?)"; exit 1
-          fi
-          test "$SA_ID" = "$EXPECTED_SA_ID" || { echo "Unexpected SA: $SA_ID"; exit 1; }
-          echo "OK: OIDC issued token for $SA_ID"
+          yc iam whoami --format json | jq -re '.service_account.name=="ci-oidc-sa"'
 
