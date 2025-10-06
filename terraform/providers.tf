@@ -1,8 +1,8 @@
 terraform {
   required_providers {
     yandex = {
-      source  = "yandex-cloud/yandex"
-      version = "~> 0.120"
+      source  = "registry.opentofu.org/yandex-cloud/yandex"  
+      version = "0.120.0"
     }
   }
 }
