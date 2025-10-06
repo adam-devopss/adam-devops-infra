@@ -3,8 +3,7 @@ output "web_public_ip" {
 }
 
 data "yandex_compute_image" "ubuntu" {
-  folder_id = "standard-images"
-  family    = "ubuntu-2404-lts"
+  image_id = "fd82l73ac78777p8edco"
 }
 
 
