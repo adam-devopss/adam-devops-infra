@@ -35,28 +35,36 @@ jobs:
 
 
       # 2) Обмениваем OIDC → IAM в YC (ВАЖНО: поле jwt)
-      - name: Exchange OIDC for IAM token
+      - name: Exchange OIDC for IAM token (federation)
         id: iam
+        env:
+          FED_ID: ${{ secrets.YC_FED_ID }}   # ID федерации OIDC в Yandex Cloud
         run: |
           set -euo pipefail
           IDTOKEN='${{ steps.oidc.outputs.idtoken }}'
+
+          # (опционально) debug: посмотреть payload токена
+          echo "$IDTOKEN" | cut -d '.' -f2 | base64 -d 2>/dev/null | jq . || true
+
           RESP="$(curl -sS -X POST \
             -H 'Content-Type: application/json' \
-            -d "{\"jwt\":\"${IDTOKEN}\"}" \
-            'https://iam.api.cloud.yandex.net/iam/v1/tokens')"
+            -d "{\"federationId\":\"${FED_ID}\",\"identityToken\":\"${IDTOKEN}\"}" \
+            'https://iam.api.cloud.yandex.net/iam/v1/tokens:createFederationToken')"
+
           echo "$RESP" | jq .
-          IAM_TOKEN="$(echo "$RESP" | jq -r '.iamToken')"
-          if [ -z "$IAM_TOKEN" ] || [ "$IAM_TOKEN" = "null" ]; then
-            echo "IAM token is empty"; exit 1
-          fi
+          IAM_TOKEN="$(echo "$RESP" | jq -r '.iamToken // empty')"
+          [ -n "$IAM_TOKEN" ] || { echo "IAM token is empty"; exit 1; }
+
+          echo "::add-mask::$IAM_TOKEN"
           echo "IAM_TOKEN=$IAM_TOKEN" >> $GITHUB_ENV
 
-      # 3) Кто мы? Прямой вызов Cloud API (без yc)
+      # 3) Кто мы? (прямой вызов API, без yc)
       - name: Who am I (Cloud API)
         run: |
           set -euo pipefail
           curl -sS -H "Authorization: Bearer $IAM_TOKEN" \
             'https://iam.api.cloud.yandex.net/iam/v1/tokens:whoAmI' | jq .
+
 
       # 4) Проверяем, что это ваш SA
       - name: Assert SA is ci-oidc-sa
