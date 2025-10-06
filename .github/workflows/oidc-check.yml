@@ -20,7 +20,9 @@ jobs:
           set -e
           curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
           echo "$HOME/yandex-cloud/bin" >> "$GITHUB_PATH"
-          yc --version
+
+      - name: Check yc version
+        run: yc --version
 
       # 1) Запрашиваем у GitHub OIDC ID token c нужной audience
       - name: Get GitHub OIDC ID token
