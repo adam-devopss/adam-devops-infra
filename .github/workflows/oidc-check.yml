@@ -11,15 +11,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # 1) Ставим yc (оставлю как есть — вдруг пригодится),
-      #    но дальнейшие шаги не зависят от него
+      # Необязательно для проверки, но оставлю — вдруг пригодится.
       - name: Install Yandex Cloud CLI
         run: |
           curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
           echo "$HOME/yandex-cloud/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/yandex-cloud/bin:$PATH"
 
-      # 2) Получаем OIDC ID-токен нативно из GitHub (аудитория = ваша в федерации)
+      # 1) Получаем OIDC ID-токен из GitHub (audience ДОЛЖЕН совпадать с тем, что в федерации)
       - name: Get GitHub OIDC ID token
         id: oidc
         uses: actions/github-script@v7
@@ -27,10 +26,10 @@ jobs:
           script: |
             const aud = 'https://github.com/${{ github.repository }}';
             const idt = await core.getIDToken(aud);
-            if (!idt) { core.setFailed('OIDC ID token is empty'); return; }
+            if (!idt) core.setFailed('OIDC ID token is empty');
             core.setOutput('idtoken', idt);
 
-      # 3) Меняем OIDC → IAM (официальная точка обмена YC)
+      # 2) Обмениваем OIDC → IAM в YC (ВАЖНО: поле jwt)
       - name: Exchange OIDC for IAM token
         id: iam
         run: |
@@ -38,7 +37,7 @@ jobs:
           IDTOKEN='${{ steps.oidc.outputs.idtoken }}'
           RESP="$(curl -sS -X POST \
             -H 'Content-Type: application/json' \
-            -d "{\"identityToken\":\"${IDTOKEN}\"}" \
+            -d "{\"jwt\":\"${IDTOKEN}\"}" \
             'https://iam.api.cloud.yandex.net/iam/v1/tokens')"
           echo "$RESP" | jq .
           IAM_TOKEN="$(echo "$RESP" | jq -r '.iamToken')"
@@ -47,19 +46,19 @@ jobs:
           fi
           echo "IAM_TOKEN=$IAM_TOKEN" >> $GITHUB_ENV
 
-      # 4) Кто мы? (без yc — прямым вызовом whoAmI)
+      # 3) Кто мы? Прямой вызов Cloud API (без yc)
       - name: Who am I (Cloud API)
-        id: whoami
         run: |
           set -euo pipefail
-          RESP="$(curl -sS -H "Authorization: Bearer $IAM_TOKEN" \
-            'https://iam.api.cloud.yandex.net/iam/v1/tokens:whoAmI')"
-          echo "$RESP" | jq .
-          SA_NAME="$(echo "$RESP" | jq -r '.serviceAccount?.name // empty')"
-          echo "SA_NAME=$SA_NAME" >> $GITHUB_ENV
+          curl -sS -H "Authorization: Bearer $IAM_TOKEN" \
+            'https://iam.api.cloud.yandex.net/iam/v1/tokens:whoAmI' | jq .
 
-      # 5) Проверяем, что это ваш привязанный SA (ci-oidc-sa)
+      # 4) Проверяем, что это ваш SA
       - name: Assert SA is ci-oidc-sa
         run: |
+          set -euo pipefail
+          SA_NAME="$(curl -sS -H "Authorization: Bearer $IAM_TOKEN" \
+            'https://iam.api.cloud.yandex.net/iam/v1/tokens:whoAmI' | jq -r '.serviceAccount.name')"
+          echo "SA_NAME=$SA_NAME"
           test "$SA_NAME" = "ci-oidc-sa"
 
