@@ -22,7 +22,9 @@ jobs:
           echo "$HOME/yandex-cloud/bin" >> "$GITHUB_PATH"
           sudo apt-get update -y
           sudo apt-get install -y jq
-          yc --version
+          
+      - name: Check yc version
+        run: yc --version
 
       # 1) Берём GitHub OIDC ID-токен (audience = yandex-cloud)
       - name: Get GitHub OIDC ID token
