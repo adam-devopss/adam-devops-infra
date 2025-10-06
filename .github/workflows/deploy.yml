@@ -23,6 +23,12 @@ jobs:
           curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
           echo "${HOME}/yandex-cloud/bin" >> "$GITHUB_PATH"
 
+      - name: Update Yandex Cloud CLI
+        run: |
+          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
+          echo "${HOME}/yandex-cloud/bin" >> $GITHUB_PATH
+          yc --version
+
       # ➋ Получаем краткоживущий IAM-токен через OIDC (без ключей)
       - name: Authenticate to Yandex Cloud via OIDC
         run: |
