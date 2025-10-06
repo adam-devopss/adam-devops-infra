@@ -1,0 +1,61 @@
+---
+- name: Restore latest static backup from S3
+  hosts: web
+  become: true
+
+  vars:
+    s3_bucket: "adam-devops-backups"
+
+  tasks:
+    - name: Ensure s3cmd is installed
+      apt:
+        name: s3cmd
+        state: present
+        update_cache: true
+
+    - name: Find latest backup key in S3
+      shell: |
+        set -e
+        s3cmd -c /root/.s3cfg ls s3://{{ s3_bucket }}/ \
+          | awk '{print $4}' \
+          | sort \
+          | tail -n1
+      register: latest_key
+      changed_when: false
+
+    - name: Fail if no backups found
+      fail:
+        msg: "No backups found in s3://{{ s3_bucket }}/"
+      when: latest_key.stdout | length == 0
+
+    - name: Download latest archive to /tmp
+      command: >
+        s3cmd -c /root/.s3cfg get {{ latest_key.stdout }} /tmp/site-restore.tar.gz
+      args:
+        creates: /tmp/site-restore.tar.gz
+
+    - name: Remove current /var/www/html to avoid leftovers
+      file:
+        path: /var/www/html
+        state: absent
+
+    # Внутри архива верхний уровень — директория 'html'
+    - name: Restore archive into /var/www (contains top-level 'html')
+      unarchive:
+        src: /tmp/site-restore.tar.gz
+        dest: /var/www
+        remote_src: true
+
+    - name: Ensure ownership for nginx
+      file:
+        path: /var/www/html
+        owner: www-data
+        group: www-data
+        recurse: true
+      changed_when: false
+
+    - name: Reload nginx
+      systemd:
+        name: nginx
+        state: reloaded
+

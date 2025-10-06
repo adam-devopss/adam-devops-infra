@@ -1,0 +1,13 @@
+---
+- name: Deploy static site
+  hosts: web
+  become: true
+  tasks:
+    - name: Sync / overwrite /var/www/html
+      copy:
+        src: ../files/site/
+        dest: /var/www/html/
+        owner: www-data
+        group: www-data
+        mode: "0644"
+

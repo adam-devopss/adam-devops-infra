@@ -1,0 +1,27 @@
+name: Rollback Static Site
+
+on:
+  workflow_dispatch:
+    inputs:
+      backup_date:
+        description: "Backup date (dd-mm-yy), empty = latest"
+        required: false
+        default: ""
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run rollback playbook
+        uses: dawidd6/action-ansible-playbook@v2
+        with:
+          playbook: ansible/playbooks/rollback.yml
+          inventory: ansible/inventories/prod.ini
+          key: ${{ secrets.DEPLOY_SSH_PRIVATE }}
+          extra_ansible_args: >
+            --extra-vars "backup_date=${{ github.event.inputs.backup_date }}"
+        env:
+          DEPLOY_SSH_PUBLIC: ${{ secrets.DEPLOY_SSH_PUBLIC }}
+

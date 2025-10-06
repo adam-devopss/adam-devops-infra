@@ -1,0 +1,144 @@
+---
+- name: Setup web server with HTTPS
+  hosts: web
+  become: true
+
+  vars:
+    domain_main: "adam-devops.ru"
+    domain_www: "www.adam-devops.ru"
+    le_email: "albakov.adam2015@gmail.com"
+
+  tasks:
+    - name: Install Nginx
+      apt:
+        name: nginx
+        state: present
+        update_cache: true
+
+    - name: Enable and start Nginx
+      systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Create index.html
+      copy:
+        dest: /var/www/html/index.html
+        content: |
+          <html>
+          <head><title>{{ domain_main }}</title></head>
+          <body>
+            <h1>It works!</h1>
+            <p>Deployed with Ansible</p>
+          </body>
+          </html>
+
+    - name: Create /health endpoint
+      copy:
+        dest: /var/www/html/health
+        content: "ok\n"
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+    - name: Install Certbot + nginx plugin
+      apt:
+        name:
+          - certbot
+          - python3-certbot-nginx
+        state: present
+        update_cache: true
+
+    - name: Obtain/renew LE cert ({{ domain_main }} + {{ domain_www }})
+      command: >
+        certbot --nginx -n --agree-tos
+        -m {{ le_email }}
+        -d {{ domain_main }} -d {{ domain_www }}
+        --redirect
+      args:
+        creates: "/etc/letsencrypt/live/{{ domain_main }}/fullchain.pem"
+
+    - name: Enable certbot renew timer
+      systemd:
+        name: certbot.timer
+        state: started
+        enabled: true
+
+    - name: Create deploy user
+      user:
+        name: deploy
+        shell: /bin/bash
+        groups: sudo
+        append: true
+        create_home: true
+
+    - name: Add SSH key for deploy
+      authorized_key:
+        user: deploy
+        state: present
+        key: "{{ lookup('env', 'DEPLOY_SSH_PUBLIC') }}"
+
+    - name: Allow sudo without password for deploy (optional)
+      copy:
+        dest: /etc/sudoers.d/90-deploy
+        content: "deploy ALL=(ALL) NOPASSWD:ALL\n"
+        mode: '0440'
+
+    - name: Harden sshd_config (no root login, no passwords)
+      lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: "{{ item.re }}"
+        line: "{{ item.line }}"
+        state: present
+        backrefs: true
+      with_items:
+        - { re: '^#?PermitRootLogin.*',        line: 'PermitRootLogin no' }
+        - { re: '^#?PasswordAuthentication.*', line: 'PasswordAuthentication no' }
+        - { re: '^#?PubkeyAuthentication.*',   line: 'PubkeyAuthentication yes' }
+      notify: Restart SSH
+
+    # --- Security updates & auto-reboot nightly ---
+    - name: Install unattended-upgrades
+      apt:
+        name:
+          - unattended-upgrades
+          - apt-listchanges
+        state: present
+        update_cache: true
+
+    - name: Enable unattended security updates
+      copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        mode: '0644'
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Download-Upgradeable-Packages "1";
+          APT::Periodic::AutocleanInterval "7";
+          APT::Periodic::Unattended-Upgrade "1";
+
+    - name: Configure unattended-upgrades (security + auto-reboot at 03:30)
+      copy:
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        mode: '0644'
+        content: |
+          Unattended-Upgrade::Allowed-Origins {
+            "${distro_id}:${distro_codename}";
+            "${distro_id}:${distro_codename}-security";
+          };
+          Unattended-Upgrade::Automatic-Reboot "true";
+          Unattended-Upgrade::Automatic-Reboot-Time "03:30";
+
+  handlers:
+    - name: Restart SSH
+      systemd:
+        name: ssh
+        state: restarted
+
+    - name: Create /health endpoint
+      copy:
+        dest: /var/www/html/health
+        content: "ok\n"
+        owner: www-data
+        group: www-data
+        mode: '0644'
+

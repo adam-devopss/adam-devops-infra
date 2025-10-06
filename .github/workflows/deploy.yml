@@ -1,0 +1,24 @@
+name: Deploy Web
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Run Ansible
+        uses: dawidd6/action-ansible-playbook@v2
+        with:
+          playbook: ansible/playbooks/web.yml
+          inventory: ansible/inventories/prod.ini
+          key: ${{ secrets.DEPLOY_SSH_PRIVATE }}
+        env:
+          DEPLOY_SSH_PUBLIC: ${{ secrets.DEPLOY_SSH_PUBLIC }}
+

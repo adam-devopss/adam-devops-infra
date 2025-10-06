@@ -1,0 +1,61 @@
+---
+- name: Roll back static site from S3 backup
+  hosts: web
+  become: true
+
+  vars:
+    s3_bucket: "adam-devops-backups"
+    backup_date: ""   # передаём через --extra-vars 'backup_date=05-10-25' или оставляем пустым (=latest)
+
+  tasks:
+    - name: Ensure s3cmd
+      apt:
+        name: s3cmd
+        state: present
+        update_cache: true
+
+    - name: Choose backup key (by date or latest)
+      shell: |
+        set -e
+        if [ -n "{{ backup_date }}" ]; then
+          echo "s3://{{ s3_bucket }}/site-{{ backup_date }}.tar.gz"
+        else
+          s3cmd -c /root/.s3cfg ls s3://{{ s3_bucket }}/ | awk '{print $4}' | sort | tail -n1
+        fi
+      register: chosen_key
+      changed_when: false
+
+    - name: Check backup exists
+      shell: "s3cmd -c /root/.s3cfg info {{ chosen_key.stdout }}"
+      register: key_info
+      changed_when: false
+      failed_when: key_info.rc != 0
+
+    - name: Download archive to /tmp (overwrite if exists)
+      command: >
+        s3cmd -c /root/.s3cfg get -f {{ chosen_key.stdout }} /tmp/site-rollback.tar.gz
+
+    - name: Remove current /var/www/html
+      file:
+        path: /var/www/html
+        state: absent
+
+    - name: Restore into /var/www (archive contains top-level 'html')
+      unarchive:
+        src: /tmp/site-rollback.tar.gz
+        dest: /var/www
+        remote_src: true
+
+    - name: Ownership for nginx
+      file:
+        path: /var/www/html
+        owner: www-data
+        group: www-data
+        recurse: true
+      changed_when: false
+
+    - name: Reload nginx
+      systemd:
+        name: nginx
+        state: reloaded
+

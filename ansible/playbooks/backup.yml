@@ -1,0 +1,141 @@
+---
+- name: Install daily backup to Yandex Object Storage
+  hosts: web
+  become: true
+
+  vars:
+    s3_bucket: "adam-devops-backups"
+    s3_region: "ru-central1"
+    s3_endpoint: "storage.yandexcloud.net"   # без https:// для s3cmd
+
+  tasks:
+    - name: Install s3cmd and deps
+      apt:
+        name:
+          - s3cmd
+          - ca-certificates
+          - tar
+        state: present
+        update_cache: true
+
+    - name: Ensure s3cfg directory
+      file:
+        path: /root
+        state: directory
+        mode: '0750'
+
+    - name: Write s3cmd config for root
+      copy:
+        dest: /root/.s3cfg
+        mode: '0600'
+        content: |
+          [default]
+          access_key = {{ lookup('env','AWS_ACCESS_KEY_ID') }}
+          secret_key = {{ lookup('env','AWS_SECRET_ACCESS_KEY') }}
+          host_base = {{ s3_endpoint }}
+          host_bucket = %(bucket)s.{{ s3_endpoint }}
+          use_https = True
+          signature_v2 = False
+          check_ssl_certificate = True
+          check_ssl_hostname = True
+          enable_multipart = True
+          multipart_chunk_size_mb = 15
+          bucket_location = {{ s3_region }}
+
+    - name: Create backup script
+      copy:
+        dest: /usr/local/bin/backup_static.sh
+        mode: '0755'
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          DATE=$(date +%d-%m-%y)   # dd-mm-yy
+          TMP="/tmp/site-${DATE}.tar.gz"
+          tar -C /var/www -czf "$TMP" html
+          # put to s3
+          /usr/bin/s3cmd -c /root/.s3cfg put "$TMP" "s3://{{ s3_bucket }}/site-${DATE}.tar.gz"
+          rm -f "$TMP"
+
+    - name: Systemd service (oneshot)
+      copy:
+        dest: /etc/systemd/system/backup-static.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Backup static site to S3
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/backup_static.sh
+
+    - name: Systemd timer (daily 03:20)
+      copy:
+        dest: /etc/systemd/system/backup-static.timer
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Run backup-static.service daily
+
+          [Timer]
+          OnCalendar=*-*-* 03:20:00
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Reload systemd & enable timer
+      shell: |
+        systemctl daemon-reload
+        systemctl enable --now backup-static.timer
+
+    - name: Cleanup script (remove backups older than 14 days)
+      copy:
+        dest: /usr/local/bin/cleanup_backups.sh
+        mode: '0755'
+        content: |
+          #!/usr/bin/env bash
+          set -euo pipefail
+          BUCKET="adam-devops-backups"
+          # Оставляем 14 последних по дате в имени (dd-mm-yy)
+          # Если нужно по времени, можно сравнивать по метаданным s3cmd.
+          keep=14
+          list=$(s3cmd -c /root/.s3cfg ls s3://$BUCKET/ | awk '{print $4}' | sort)
+          count=$(echo "$list" | wc -l)
+          if [ "$count" -le "$keep" ]; then exit 0; fi
+          to_delete=$(echo "$list" | head -n $((count-keep)))
+          if [ -n "$to_delete" ]; then
+            echo "$to_delete" | xargs -r -n1 s3cmd -c /root/.s3cfg del
+          fi
+
+    - name: Systemd service for cleanup
+      copy:
+        dest: /etc/systemd/system/cleanup-backups.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Cleanup old S3 backups
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/bin/cleanup_backups.sh
+
+    - name: Systemd timer (daily 03:40)
+      copy:
+        dest: /etc/systemd/system/cleanup-backups.timer
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Run cleanup-backups.service daily
+
+          [Timer]
+          OnCalendar=*-*-* 03:40:00
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Reload systemd & enable cleanup timer
+      shell: |
+        systemctl daemon-reload
+        systemctl enable --now cleanup-backups.timer
+

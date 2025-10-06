@@ -1,0 +1,50 @@
+# === Terraform / OpenTofu ===
+*.tfstate
+*.tfstate.*
+crash.log
+.terraform/
+.terraform.lock.hcl
+
+# === Ansible ===
+*.retry
+
+# === Секреты и ключи ===
+*.tfvars
+*.tfvars.json
+*.env
+*.pem
+*.key
+*.pfx
+*.crt
+*.cert
+secrets/
+vault_pass.txt
+
+# === IDE и системные файлы ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# === OpenTofu backend конфиг (локально, с ключами) ===
+terraform/backend.hcl
+
+# === Локальные ключи Yandex Cloud ===
+*.json
+
+# === Логи ===
+*.log
+
+# === Прочее ===
+*.bak
+
+# === SSH keys ===
+*.pub
+*.pem
+*.key
+id_ed25519
+id_ed25519.pub
+id_rsa
+id_rsa.pub
+terraform/ssh
+.ssh/

@@ -1,0 +1,23 @@
+name: Deploy Static
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "ansible/files/site/**"
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Ansible (static)
+        uses: dawidd6/action-ansible-playbook@v2
+        with:
+          playbook: ansible/playbooks/deploy_static.yml
+          inventory: ansible/inventories/prod.ini
+          key: ${{ secrets.DEPLOY_SSH_PRIVATE }}
+        env:
+          DEPLOY_SSH_PUBLIC: ${{ secrets.DEPLOY_SSH_PUBLIC }}
+
