@@ -29,6 +29,11 @@ jobs:
             if (!idt) core.setFailed('OIDC ID token is empty');
             core.setOutput('idtoken', idt);
 
+      - name: Debug ID token
+        run: |
+          echo '${{ steps.oidc.outputs.idtoken }}' | cut -d "." -f2 | base64 -d | jq .
+
+
       # 2) Обмениваем OIDC → IAM в YC (ВАЖНО: поле jwt)
       - name: Exchange OIDC for IAM token
         id: iam
