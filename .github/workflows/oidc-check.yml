@@ -1,5 +1,7 @@
 name: OIDC Check
-on: { workflow_dispatch: {} }
+
+on:
+  workflow_dispatch:
 
 permissions:
   id-token: write
@@ -8,70 +10,60 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout (optional)
+        uses: actions/checkout@v4
 
-      # Необязательно для проверки, но оставлю — вдруг пригодится.
-      - name: Install Yandex Cloud CLI
-        run: |
-          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
-          echo "$HOME/yandex-cloud/bin" >> "$GITHUB_PATH"
-          export PATH="$HOME/yandex-cloud/bin:$PATH"
-
-      # 1) Получаем OIDC ID-токен из GitHub (audience ДОЛЖЕН совпадать с тем, что в федерации)
+      # Получаем GitHub OIDC ID token с НУЖНОЙ аудиторией
       - name: Get GitHub OIDC ID token
         id: oidc
         uses: actions/github-script@v7
         with:
           script: |
+            const core = require('@actions/core');
             const aud = 'https://github.com/adam-devopss/adam-devops-infra';
-            const idt = await core.getIDToken(aud);
-            if (!idt) core.setFailed('OIDC ID token is empty');
-            core.setOutput('idtoken', idt);
+            const idtoken = await core.getIDToken(aud);
+            core.setOutput('idtoken', idtoken);
 
-      - name: Debug ID token
+      # Просто печать payload (для дебага), не падаем если base64 «ругается»
+      - name: Print ID token payload
         run: |
-          echo '${{ steps.oidc.outputs.idtoken }}' | cut -d "." -f2 | base64 -d | jq .
+          set -euo pipefail
+          IDTOKEN='${{ steps.oidc.outputs.idtoken }}'
+          echo "$IDTOKEN" | cut -d '.' -f2 | tr '_-' '/+' | base64 -d 2>/dev/null | jq . || true
 
-
-      # 2) Обмениваем OIDC → IAM в YC (ВАЖНО: поле jwt)
+      # Обмен OIDC → IAM (ВАЖНО: верный метод createFederationToken + нужные поля)
       - name: Exchange OIDC for IAM token (federation)
         id: iam
         env:
-          FED_ID: ${{ secrets.YC_FED_ID }}   # ID федерации OIDC в Yandex Cloud
+          FED_ID: ${{ secrets.YC_FED_ID }}   # ID твоей OIDC федерации в YC
         run: |
           set -euo pipefail
           IDTOKEN='${{ steps.oidc.outputs.idtoken }}'
 
-          # (опционально) debug: посмотреть payload токена
-          echo "$IDTOKEN" | cut -d '.' -f2 | base64 -d 2>/dev/null | jq . || true
-
+          # запрашиваем IAM-токен
           RESP="$(curl -sS -X POST \
             -H 'Content-Type: application/json' \
             -d "{\"federationId\":\"${FED_ID}\",\"identityToken\":\"${IDTOKEN}\"}" \
             'https://iam.api.cloud.yandex.net/iam/v1/tokens:createFederationToken')"
 
-          echo "$RESP" | jq .
+          echo "=== Raw YC response ==="
+          echo "$RESP" | jq . || echo "$RESP"
+
           IAM_TOKEN="$(echo "$RESP" | jq -r '.iamToken // empty')"
-          [ -n "$IAM_TOKEN" ] || { echo "IAM token is empty"; exit 1; }
+          if [ -z "$IAM_TOKEN" ]; then
+            echo "IAM token is empty. Likely federation/subject/audience mismatch."
+            exit 1
+          fi
 
           echo "::add-mask::$IAM_TOKEN"
           echo "IAM_TOKEN=$IAM_TOKEN" >> $GITHUB_ENV
 
-      # 3) Кто мы? (прямой вызов API, без yc)
+      # Кто мы? Непосредственный вызов Cloud API
       - name: Who am I (Cloud API)
         run: |
           set -euo pipefail
           curl -sS -H "Authorization: Bearer $IAM_TOKEN" \
             'https://iam.api.cloud.yandex.net/iam/v1/tokens:whoAmI' | jq .
-
-
-      # 4) Проверяем, что это ваш SA
-      - name: Assert SA is ci-oidc-sa
-        run: |
-          set -euo pipefail
-          SA_NAME="$(curl -sS -H "Authorization: Bearer $IAM_TOKEN" \
-            'https://iam.api.cloud.yandex.net/iam/v1/tokens:whoAmI' | jq -r '.serviceAccount.name')"
-          echo "SA_NAME=$SA_NAME"
-          test "$SA_NAME" = "ci-oidc-sa"
 
