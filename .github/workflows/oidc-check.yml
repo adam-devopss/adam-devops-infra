@@ -24,7 +24,7 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const aud = 'https://github.com/${{ github.repository }}';
+            const aud = 'https://github.com/adam-devopss/adam-devops-infra';
             const idt = await core.getIDToken(aud);
             if (!idt) core.setFailed('OIDC ID token is empty');
             core.setOutput('idtoken', idt);
