@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  id-token: write   # важно для запроса OIDC токена у GitHub
+  id-token: write
   contents: read
 
 jobs:
@@ -17,47 +17,31 @@ jobs:
 
       - name: Install Yandex Cloud CLI
         run: |
-          set -e
           curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
           echo "$HOME/yandex-cloud/bin" >> "$GITHUB_PATH"
-
+      
       - name: Check yc version
         run: yc --version
-
-      # 1) Запрашиваем у GitHub OIDC ID token c нужной audience
+      
       - name: Get GitHub OIDC ID token
-        id: oidc
+        id: gh_oidc
         env:
-          REPO: ${{ github.repository }}
-          # audience должен совпадать с тем, что задано в федерации
-          # мы использовали https://github.com/<owner>/<repo>
-          AUDIENCE: https://github.com/${{ github.repository }}
-          REQ_URL: ${{ env.ACTIONS_ID_TOKEN_REQUEST_URL }}
-          REQ_TOKEN: ${{ env.ACTIONS_ID_TOKEN_REQUEST_TOKEN }}
+          AUDIENCE: yandex-cloud
         run: |
           set -euo pipefail
-          ID_TOKEN=$(curl -sS -H "Authorization: bearer ${REQ_TOKEN}" \
-            "${REQ_URL}&audience=${AUDIENCE}" | jq -r '.value')
-          if [ -z "$ID_TOKEN" ] || [ "$ID_TOKEN" = "null" ]; then
-            echo "Failed to obtain GitHub OIDC id_token"; exit 1
-          fi
-          echo "id_token=$ID_TOKEN" >> "$GITHUB_OUTPUT"
+          REQ_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}"
+          RESP="$(curl -sSf \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "$REQ_URL")"
+          TOKEN="$(echo "$RESP" | jq -r '.value')"
+          echo "token=$TOKEN" >> "$GITHUB_OUTPUT"
 
-      # 2) Обмениваем ID token на YC IAM токен
-      - name: Auth in Yandex Cloud via OIDC
-        env:
-          YC_CLOUD_ID:  ${{ secrets.YC_CLOUD_ID }}
-          YC_FOLDER_ID: ${{ secrets.YC_FOLDER_ID }}
-          ID_TOKEN:     ${{ steps.oidc.outputs.id_token }}
+      - name: Configure yc profile (OIDC)
         run: |
-          set -euo pipefail
           yc config profile create github-oidc
-          yc config set cloud-id  "$YC_CLOUD_ID"
-          yc config set folder-id "$YC_FOLDER_ID"
-          # обмен JWT -> IAM token
-          IAM_TOKEN=$(yc iam create-token --jwt "$ID_TOKEN")
-          [ -n "$IAM_TOKEN" ]
-          yc config set token "$IAM_TOKEN"
+          yc config set cloud-id  "${{ secrets.YC_CLOUD_ID }}"
+          yc config set folder-id "${{ secrets.YC_FOLDER_ID }}"
+          yc config set token     "${{ steps.gh_oidc.outputs.token }}"
 
       - name: Who am I in Yandex Cloud
         run: yc iam whoami
