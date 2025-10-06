@@ -5,6 +5,10 @@ on:
     branches:
       - main
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -13,6 +17,20 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
+      # ➊ Устанавливаем yc CLI на раннер
+      - name: Install Yandex Cloud CLI
+        run: |
+          curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
+          echo "${HOME}/yandex-cloud/bin" >> "$GITHUB_PATH"
+
+      # ➋ Получаем краткоживущий IAM-токен через OIDC (без ключей)
+      - name: Authenticate to Yandex Cloud via OIDC
+        run: |
+          yc --version
+          yc iam create-token --jwt-from-oidc > token.txt
+          echo "YC_IAM_TOKEN=$(cat token.txt)" >> "$GITHUB_ENV"
+
+      # ➌ Твой текущий деплой Ansible (по SSH). OIDC никого не ломает.
       - name: Run Ansible
         uses: dawidd6/action-ansible-playbook@v2
         with:
@@ -21,4 +39,5 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_PRIVATE }}
         env:
           DEPLOY_SSH_PUBLIC: ${{ secrets.DEPLOY_SSH_PUBLIC }}
+          YC_IAM_TOKEN: ${{ env.YC_IAM_TOKEN }} # на будущее, если в плейбуках появится yc
 
