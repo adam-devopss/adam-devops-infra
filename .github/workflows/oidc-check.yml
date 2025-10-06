@@ -15,48 +15,37 @@ jobs:
       - name: Checkout (optional)
         uses: actions/checkout@v4
 
-      - name: Install tools (yc + jq)
+      - name: Install Yandex Cloud CLI
         run: |
-          set -euo pipefail
           curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash
           echo "$HOME/yandex-cloud/bin" >> "$GITHUB_PATH"
-          sudo apt-get update -y
-          sudo apt-get install -y jq
-          
+          export PATH="$HOME/yandex-cloud/bin:$PATH"
+
       - name: Check yc version
         run: yc --version
 
-      # 1) Берём GitHub OIDC ID-токен (audience = yandex-cloud)
       - name: Get GitHub OIDC ID token
-        id: gh_oidc
-        env:
-          AUDIENCE: yandex-cloud
+        id: oidc
         run: |
           set -euo pipefail
-          REQ_URL="${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}"
-          RESP="$(curl -sSf -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" "$REQ_URL")"
-          ID_TOKEN="$(echo "$RESP" | jq -r '.value')"
-          echo "id_token=$ID_TOKEN" >> "$GITHUB_OUTPUT"
+          TOKEN=$(curl -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL" | jq -r .value)
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
 
-      # 2) Меняем ID-токен -> IAM-токен (через публичный IAM API)
       - name: Exchange OIDC ID token for IAM token
-        id: iam
         run: |
-          set -euo pipefail
-          IAM_TOKEN="$(curl -sSf \
+          IAM_TOKEN=$(curl -s -X POST \
             -H "Content-Type: application/json" \
-            -d "{\"jwt\":\"${{ steps.gh_oidc.outputs.id_token }}\"}" \
-            https://iam.api.cloud.yandex.net/iam/v1/tokens | jq -r '.iamToken')"
-          echo "iam_token=$IAM_TOKEN" >> "$GITHUB_OUTPUT"
+            -d "{\"identityToken\": \"${TOKEN}\"}" \
+            "https://iam.api.cloud.yandex.net/iam/v1/tokens" | jq -r '.iamToken')
+          echo "IAM_TOKEN=$IAM_TOKEN" >> $GITHUB_ENV
 
-      # 3) Конфигурируем профиль yc этим IAM-токеном
-      - name: Configure yc profile (OIDC/IAM)
+      - name: Configure YC CLI with IAM token
         run: |
-          set -euo pipefail
           yc config profile create github-oidc
-          yc config set cloud-id  "${{ secrets.YC_CLOUD_ID }}"
+          yc config set cloud-id "${{ secrets.YC_CLOUD_ID }}"
           yc config set folder-id "${{ secrets.YC_FOLDER_ID }}"
-          yc config set token     "${{ steps.iam.outputs.iam_token }}"
+          yc config set token "$IAM_TOKEN"
+          yc --version
 
       - name: Who am I in Yandex Cloud
         run: yc iam whoami
